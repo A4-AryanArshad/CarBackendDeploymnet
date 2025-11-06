@@ -710,10 +710,11 @@ const app = express();
 // CORS configuration for production deployment
 app.use(cors({
   origin: [
-    'https://workshopfrontend-one.vercel.app',
+    'https://j2mechanics.co.uk',
+    'https://www.j2mechanics.co.uk',
+    'https://car-frontend-deploy.vercel.app',
     'http://localhost:3000',
-    'http://localhost:3002',
-    'https://car-wash-client-seven.vercel.app' // Keep localhost for development
+    'http://localhost:3002'
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -1730,8 +1731,8 @@ app.put("/api/quote-requests/:id", async (req, res) => {
             quantity: 1
           }],
           mode: "payment",
-          success_url: `${process.env.FRONTEND_URL || "https://car-wash-client-seven.vercel.app"}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: `${process.env.FRONTEND_URL || "https://car-wash-client-seven.vercel.app"}/payment-cancelled`,
+          success_url: `${process.env.FRONTEND_URL || "https://www.j2mechanics.co.uk"}/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+          cancel_url: `${process.env.FRONTEND_URL || "https://www.j2mechanics.co.uk"}/payment-cancelled`,
           metadata: {
             quoteRequestId: req.params.id,
             customerEmail: req.body.customerEmail || ""
@@ -2834,7 +2835,7 @@ app.post('/api/forgot-password', async (req, res) => {
     await resetTokenDoc.save();
 
     // Create reset link
-    const resetLink = `https://car-wash-client-seven.vercel.app/reset-password?token=${resetToken}`;
+    const resetLink = `https://www.j2mechanics.co.uk/reset-password?token=${resetToken}`;
 
     // Send email with reset link
     const mailOptions = {
@@ -3166,7 +3167,7 @@ app.post('/api/reset-password', async (req, res) => {
                 </p>
                 
                 <div style="text-align: center;">
-                  <a href="https://car-wash-client-seven.vercel.app/login" class="login-button">
+                  <a href="https://www.j2mechanics.co.uk/login" class="login-button">
                     Login Now
                   </a>
                 </div>
@@ -3381,7 +3382,7 @@ app.post('/api/contact', async (req, res) => {
                 <a href="mailto:${email}" class="btn">
                   Reply to ${name}
                 </a>
-                <a href="https://car-wash-client-seven.vercel.app/dashboard" class="btn">
+                <a href="https://www.j2mechanics.co.uk/dashboard" class="btn">
                   Go to Dashboard
                 </a>
               </div>
@@ -4078,16 +4079,16 @@ app.post('/api/create-checkout-session', async (req, res) => {
       payment_method_types: ['card'],
       line_items_count: lineItems.length,
       mode: 'payment',
-      success_url: `https://workshopfrontend-one.vercel.app/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `https://workshopfrontend-one.vercel.app/payment-cancelled`
+      success_url: `https://www.j2mechanics.co.uk/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `https://www.j2mechanics.co.uk/payment-cancelled`
     });
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
       line_items: lineItems,
       mode: 'payment',
-      success_url: `https://workshopfrontend-one.vercel.app/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `https://workshopfrontend-one.vercel.app/payment-cancelled`,
+      success_url: `https://www.j2mechanics.co.uk/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `https://www.j2mechanics.co.uk/payment-cancelled`,
       metadata: {
         customerEmail,
         customerName,
@@ -7757,8 +7758,8 @@ app.post('/api/membership/upgrade', async (req, res) => {
         quantity: 1
       }],
       mode: 'subscription',
-      success_url: `${process.env.FRONTEND_URL || 'https://car-wash-client-seven.vercel.app'}/membership-payment-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL || 'https://car-wash-client-seven.vercel.app'}/membership?cancelled=true`,
+      success_url: `${process.env.FRONTEND_URL || 'https://www.j2mechanics.co.uk'}/membership-payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.FRONTEND_URL || 'https://www.j2mechanics.co.uk'}/membership?cancelled=true`,
       metadata: {
         userEmail,
         membershipType,
