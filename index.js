@@ -1633,7 +1633,8 @@ app.post("/api/quote-requests", async (req, res) => {
         make: req.body.carMake || "",
         model: req.body.carModel || "",
         year: req.body.carYear || "",
-        registration: req.body.carVin || "",
+    // Prefer explicit carRegistration from client; fallback to VIN (old behavior)
+    registration: req.body.carRegistration || req.body.carVin || "",
         mileage: req.body.carMileage || ""
       },
       serviceDescription: req.body.serviceDescription || "",
