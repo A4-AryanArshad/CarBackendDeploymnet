@@ -942,6 +942,46 @@ const membershipSchema = new mongoose.Schema({
 });
 const Membership = mongoose.model('Membership', membershipSchema);
 
+// Helper function to automatically check and update expired premium memberships
+async function checkAndUpdateExpiredMembership(userEmail) {
+  try {
+    const membership = await Membership.findOne({ userEmail });
+    
+    if (!membership || membership.membershipType !== 'premium') {
+      return membership; // Return existing membership or null
+    }
+    
+    const now = new Date();
+    const endDate = membership.endDate ? new Date(membership.endDate) : null;
+    
+    // Check if membership has expired
+    if (endDate && endDate < now) {
+      console.log(`🔄 Automatically updating expired premium membership to free for user: ${userEmail}`);
+      console.log(`   Expired on: ${endDate.toISOString()}, Current: ${now.toISOString()}`);
+      
+      // Update membership to free
+      membership.membershipType = 'free';
+      membership.status = 'expired';
+      // Reset benefits to free tier defaults
+      membership.benefits = {
+        labourDiscount: 0,
+        freeChecks: 0,
+        fluidTopUps: 0,
+        motDiscount: 0,
+        referralCredits: membership.benefits?.referralCredits || 0 // Keep referral credits
+      };
+      await membership.save();
+      
+      console.log(`✅ Successfully updated expired premium membership to free for: ${userEmail}`);
+    }
+    
+    return membership;
+  } catch (error) {
+    console.error(`⚠️ Error checking/updating expired membership for ${userEmail}:`, error);
+    return null;
+  }
+}
+
 // Referral schema
 const referralSchema = new mongoose.Schema({
   referrerEmail: { type: String, required: true },
@@ -1555,7 +1595,10 @@ app.get('/api/reward/eligibility/:email', async (req, res) => {
     if (!user) return res.json({ eligible: false, reason: 'no_user' });
     if (user.rewardClaimed) return res.json({ eligible: false, reason: 'already_claimed' });
 
-    const membership = await Membership.findOne({ userEmail: email });
+    let membership = await Membership.findOne({ userEmail: email });
+    // Check and update expired membership
+    membership = await checkAndUpdateExpiredMembership(email) || membership;
+    
     if (!membership || membership.status !== 'active') {
       return res.json({ eligible: false, reason: 'no_active_membership' });
     }
@@ -1588,7 +1631,10 @@ app.post('/api/reward/claim', async (req, res) => {
     if (!user) return res.status(404).json({ success: false, error: 'no_user' });
     if (user.rewardClaimed) return res.status(400).json({ success: false, error: 'already_claimed' });
 
-    const membership = await Membership.findOne({ userEmail: email });
+    let membership = await Membership.findOne({ userEmail: email });
+    // Check and update expired membership
+    membership = await checkAndUpdateExpiredMembership(email) || membership;
+    
     if (!membership || membership.status !== 'active') return res.status(400).json({ success: false, error: 'not_eligible' });
 
     const started = membership.startDate ? new Date(membership.startDate) : null;
@@ -4172,6 +4218,22 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
           return res.status(404).json({ error: "Quote request not found" });
         }
 
+        // Check if already processed to prevent duplicates
+        if (quoteRequest.paymentStatus === 'paid' || quoteRequest.status === 'accepted') {
+          console.log("⚠️ Quote request already processed, skipping duplicate creation");
+          return res.json({ success: true, message: "Quote request payment already processed" });
+        }
+
+        // Check if booking already exists for this session
+        const existingBooking = await Carbooking.findOne({ stripeSessionId: session.id });
+        if (existingBooking) {
+          console.log("⚠️ Booking already exists for this session, skipping duplicate creation");
+          quoteRequest.paymentStatus = "paid";
+          quoteRequest.status = "accepted";
+          await quoteRequest.save();
+          return res.json({ success: true, message: "Quote request payment already processed" });
+        }
+
         // Update quote request payment status
         quoteRequest.paymentStatus = "paid";
         quoteRequest.status = "accepted";
@@ -4179,26 +4241,41 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
 
         console.log("✅ Quote request payment status updated:", quoteRequest._id);
 
+        // Extract customer, car, and service data using nested structure with fallback for backward compatibility
+        const customerName = quoteRequest.customer?.name || quoteRequest.customerName || 'Customer';
+        const customerEmail = quoteRequest.customer?.email || quoteRequest.customerEmail || 'unknown@example.com';
+        const customerPhone = quoteRequest.customer?.phone || quoteRequest.customerPhone || '';
+        const carMake = quoteRequest.car?.make || quoteRequest.carMake || '';
+        const carModel = quoteRequest.car?.model || quoteRequest.carModel || '';
+        const carRegistration = quoteRequest.car?.registration || quoteRequest.carRegistration || '';
+        const carYear = quoteRequest.car?.year || quoteRequest.carYear || '';
+        const carMileage = quoteRequest.car?.mileage || quoteRequest.carMileage || '';
+        const serviceTitle = quoteRequest.service?.title || quoteRequest.serviceTitle || 'Service';
+        const serviceCategory = quoteRequest.service?.category || quoteRequest.serviceCategory || 'service';
+        const serviceDuration = quoteRequest.service?.duration || quoteRequest.serviceDuration || '';
+        const quotedPrice = quoteRequest.quotedPrice || 0;
+        const quotedDetails = quoteRequest.quotedDetails || quoteRequest.serviceDescription || 'Quote request service';
+
         // Create Carbooking from quote request
         const newBooking = new Carbooking({
           customer: {
-            name: quoteRequest.customer.name,
-            email: quoteRequest.customer.email,
-            phone: quoteRequest.customer.phone,
+            name: customerName,
+            email: customerEmail,
+            phone: customerPhone,
             address: "" // Will be filled later
           },
           car: {
-            make: quoteRequest.car.make,
-            model: quoteRequest.car.model,
-            year: quoteRequest.car.year,
-            registration: quoteRequest.car.registration,
+            make: carMake,
+            model: carModel,
+            year: carYear,
+            registration: carRegistration,
             color: "", // Will be filled later
-            mileage: quoteRequest.car.mileage || 0
+            mileage: carMileage || 0
           },
           service: {
-            label: quoteRequest.service.title,
-            description: quoteRequest.serviceDescription,
-            price: quoteRequest.quotedPrice
+            label: serviceTitle,
+            description: quotedDetails,
+            price: quotedPrice
           },
           date: quoteRequest.preferredDateTime ? new Date(quoteRequest.preferredDateTime) : new Date(),
           time: quoteRequest.preferredDateTime ? new Date(quoteRequest.preferredDateTime).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "09:00",
@@ -4213,41 +4290,46 @@ app.post('/api/stripe-webhook', express.raw({ type: 'application/json' }), async
         await newBooking.save();
         console.log("✅ Carbooking created from quote request:", newBooking._id);
 
-        // Create UserService record
-        const newUserService = new UserService({
-          userId: quoteRequest.customer.email,
-          userEmail: quoteRequest.customer.email,
-          userName: quoteRequest.customer.name,
+        // Check if UserService already exists for this session to prevent duplicates
+        const existingUserService = await UserService.findOne({ stripeSessionId: session.id });
+        if (existingUserService) {
+          console.log("⚠️ UserService already exists for this session, skipping duplicate creation");
+        } else {
+          // Create UserService record
+          const newUserService = new UserService({
+          userId: customerEmail,
+          userEmail: customerEmail,
+          userName: customerName,
           car: {
-            make: quoteRequest.car.make,
-            model: quoteRequest.car.model,
-            year: quoteRequest.car.year,
-            registration: quoteRequest.car.registration
+            make: carMake,
+            model: carModel,
+            year: carYear,
+            registration: carRegistration
           },
           service: {
-            label: quoteRequest.service.title,
-            sub: quoteRequest.service.duration,
-            category: quoteRequest.service.category
+            label: serviceTitle,
+            sub: serviceDuration,
+            category: serviceCategory
           },
           date: quoteRequest.preferredDateTime ? new Date(quoteRequest.preferredDateTime) : new Date(),
           time: quoteRequest.preferredDateTime ? new Date(quoteRequest.preferredDateTime).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "09:00",
-          category: quoteRequest.service.category,
+          category: serviceCategory,
           status: "confirmed",
           stripeSessionId: session.id,
-          totalAmount: quoteRequest.quotedPrice,
-          total: quoteRequest.quotedPrice,
-          total: quoteRequest.quotedPrice,
+          totalAmount: quotedPrice,
+          total: quotedPrice,
           labourHours: 0,
           labourCost: 0,
           partsCost: 0,
-          subtotal: quoteRequest.quotedPrice,
-          vat: quoteRequest.quotedPrice * 0.2
+          subtotal: quotedPrice,
+          vat: quotedPrice * 0.2
         });
 
-        await newUserService.save();
-        console.log("✅ UserService created from quote request:", newUserService._id);
+          await newUserService.save();
+          console.log("✅ UserService created from quote request:", newUserService._id);
+        }
 
-        console.log("🎉 Quote request payment processed successfully for:", quoteRequest.customer.email);
+        console.log("🎉 Quote request payment processed successfully for:", customerEmail);
         return res.json({ success: true, message: "Quote request payment processed" });
 
       } catch (quoteError) {
@@ -5330,32 +5412,104 @@ app.post('/api/complete-quote-payment', async (req, res) => {
     quoteRequest.status = 'accepted';
     await quoteRequest.save();
 
-    // Create a basic booking entry for the paid quote
+    // Extract customer, car, and service data using nested structure with fallback for backward compatibility
+    const customerName = quoteRequest.customer?.name || quoteRequest.customerName || 'Customer';
+    const customerEmail = quoteRequest.customer?.email || quoteRequest.customerEmail || 'unknown@example.com';
+    const customerPhone = quoteRequest.customer?.phone || quoteRequest.customerPhone || '';
+    const carMake = quoteRequest.car?.make || quoteRequest.carMake || '';
+    const carModel = quoteRequest.car?.model || quoteRequest.carModel || '';
+    const carRegistration = quoteRequest.car?.registration || quoteRequest.carRegistration || '';
+    const carYear = quoteRequest.car?.year || quoteRequest.carYear || '';
+    const carMileage = quoteRequest.car?.mileage || quoteRequest.carMileage || '';
+    const serviceTitle = quoteRequest.service?.title || quoteRequest.serviceTitle || 'Service';
+    const serviceCategory = quoteRequest.service?.category || quoteRequest.serviceCategory || 'service';
+    const serviceDuration = quoteRequest.service?.duration || quoteRequest.serviceDuration || '';
+    const quotedPrice = quoteRequest.quotedPrice || 0;
+    const quotedDetails = quoteRequest.quotedDetails || quoteRequest.serviceDescription || 'Quote request service';
+
+    console.log('📋 Creating booking from quote request with data:', {
+      customerName,
+      customerEmail,
+      carRegistration,
+      carMake,
+      carModel,
+      carYear,
+      serviceTitle,
+      quotedPrice
+    });
+
+    // Create Carbooking entry for the paid quote
     const bookingDoc = await Carbooking.create({
       customer: {
-        name: quoteRequest.customerName || 'Customer',
-        email: quoteRequest.customerEmail || 'unknown@example.com',
-        phone: quoteRequest.customerPhone || ''
+        name: customerName,
+        email: customerEmail,
+        phone: customerPhone,
+        address: '' // Will be filled later
       },
       car: {
-        make: quoteRequest.carMake || '',
-        model: quoteRequest.carModel || '',
-        registration: quoteRequest.carRegistration || '',
-        year: quoteRequest.carYear || ''
+        make: carMake,
+        model: carModel,
+        year: carYear,
+        registration: carRegistration,
+        color: '', // Will be filled later
+        mileage: carMileage || 0
       },
       service: {
-        label: quoteRequest.serviceTitle || 'Service',
-        description: quoteRequest.quotedDetails || 'Quote request service'
+        label: serviceTitle,
+        description: quotedDetails,
+        price: quotedPrice
       },
       date: quoteRequest.preferredDateTime ? new Date(quoteRequest.preferredDateTime) : new Date(),
       time: quoteRequest.preferredDateTime ? new Date(quoteRequest.preferredDateTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '09:00',
       status: 'confirmed',
       paymentStatus: 'paid',
       stripeSessionId: String(sessionId),
-      totalAmount: quoteRequest.quotedPrice || 0,
-      total: quoteRequest.quotedPrice || 0,
-      category: 'service'
+      totalAmount: quotedPrice,
+      total: quotedPrice,
+      category: 'service',
+      additionalDetails: quoteRequest.additionalDetails || ''
     });
+
+    console.log('✅ Carbooking created from quote request:', bookingDoc._id);
+
+    // Check if UserService already exists for this session to prevent duplicates
+    const existingUserService = await UserService.findOne({ stripeSessionId: String(sessionId) });
+    if (existingUserService) {
+      console.log('⚠️ UserService already exists for this session, skipping duplicate creation');
+    } else {
+      // Create UserService record for admin tracking (matches webhook behavior)
+      const newUserService = new UserService({
+      userId: customerEmail,
+      userEmail: customerEmail,
+      userName: customerName,
+      car: {
+        make: carMake,
+        model: carModel,
+        year: carYear,
+        registration: carRegistration
+      },
+      service: {
+        label: serviceTitle,
+        sub: serviceDuration,
+        category: serviceCategory
+      },
+      date: quoteRequest.preferredDateTime ? new Date(quoteRequest.preferredDateTime) : new Date(),
+      time: quoteRequest.preferredDateTime ? new Date(quoteRequest.preferredDateTime).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '09:00',
+      category: serviceCategory,
+      status: 'confirmed',
+      stripeSessionId: String(sessionId),
+      totalAmount: quotedPrice,
+      total: quotedPrice,
+      labourHours: 0,
+      labourCost: 0,
+      partsCost: 0,
+      subtotal: quotedPrice,
+      vat: quotedPrice * 0.2
+    });
+
+      await newUserService.save();
+      console.log('✅ UserService created from quote request:', newUserService._id);
+    }
 
     return res.json({ success: true, message: 'Quote request payment processed', quoteRequest, bookingId: bookingDoc._id });
   } catch (error) {
@@ -6709,7 +6863,7 @@ app.post('/api/test-email-reply', async (req, res) => {
     console.log('🧪 Testing email reply:', { bookingId, customerEmail, message, customerName });
 
     // Call the actual email reply endpoint
-    const response = await fetch(`http://localhost:5001/api/email-reply`, {
+    const response = await fetch(`${process.env.API_BASE_URL || 'https://car-backend-deploymnet.vercel.app'}/api/email-reply`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ bookingId, customerEmail, message, customerName })
@@ -7729,6 +7883,9 @@ app.get('/api/membership/:userEmail', async (req, res) => {
     if (!membership) {
       membership = new Membership({ userEmail, membershipType: 'free' });
       await membership.save();
+    } else {
+      // Automatically check and update expired premium memberships
+      membership = await checkAndUpdateExpiredMembership(userEmail) || membership;
     }
 
     res.json(membership);
