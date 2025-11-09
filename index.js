@@ -767,7 +767,7 @@ async function connectToMongoDB() {
 
     // Simple connection options
     const options = {
-      serverSelectionTimeoutMS: 15000,  // 15 seconds
+      serverSelectionTimeoutMS: 30000,  // 15 seconds
       socketTimeoutMS: 45000,
       maxPoolSize: 5,
       retryWrites: true,
